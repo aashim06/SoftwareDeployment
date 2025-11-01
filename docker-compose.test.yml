@@ -1,0 +1,10 @@
+version: "3.8"
+services:
+  app:
+    build: .
+    container_name: gs_app_test
+    ports:
+      - "8000:8000"
+    environment:
+      - ENV=TEST
+    command: python app.py
