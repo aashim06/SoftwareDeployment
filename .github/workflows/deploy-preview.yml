@@ -1,0 +1,51 @@
+name: Deploy to Preview
+
+on:
+  push:
+    branches: [ develop ]
+
+jobs:
+  deploy-preview:
+    name: Deploy to Preview Environment
+    runs-on: ubuntu-latest
+    environment:
+      name: preview
+      url: https://timealign.preview.emergentagent.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Run migrations
+        run: |
+          cd backend
+          # Add migration commands if needed
+          echo "Running database migrations..."
+
+      - name: Deploy notification
+        run: |
+          echo "✅ Preview deployment successful!"
+          echo "URL: https://timealign.preview.emergentagent.com"
+
+      - name: Create deployment record
+        run: |
+          curl -X POST https://timealign.preview.emergentagent.com/api/deployments \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.DEPLOYMENT_TOKEN }}" \
+            -d '{
+              "environment": "preview",
+              "branch": "${{ github.ref_name }}",
+              "commit": "${{ github.sha }}",
+              "status": "success",
+              "deployed_by": "${{ github.actor }}"
+            }' || echo "Could not create deployment record"

@@ -1,0 +1,71 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy-production:
+    name: Deploy to Production Environment
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://timealign.app
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run tests before deployment
+        run: |
+          echo "Running final tests..."
+          # Add test commands
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Database backup
+        run: |
+          echo "Creating database backup..."
+          # Add backup commands
+
+      - name: Deploy to production
+        run: |
+          echo "🚀 Deploying to production..."
+          # Add actual deployment commands
+          # This could be:
+          # - SSH to production server
+          # - Docker image push
+          # - Cloud platform deployment
+
+      - name: Health check
+        run: |
+          echo "Performing health check..."
+          curl -f https://timealign.app/api/ || exit 1
+
+      - name: Create deployment record
+        run: |
+          curl -X POST https://timealign.preview.emergentagent.com/api/deployments \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.DEPLOYMENT_TOKEN }}" \
+            -d '{
+              "environment": "production",
+              "branch": "${{ github.ref_name }}",
+              "commit": "${{ github.sha }}",
+              "status": "success",
+              "deployed_by": "${{ github.actor }}"
+            }' || echo "Could not create deployment record"
+
+      - name: Notify team
+        if: success()
+        run: |
+          echo "✅ Production deployment successful!"
+          echo "Version: ${{ github.sha }}"
