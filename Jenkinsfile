@@ -1,6 +1,11 @@
 pipeline {
   agent any
 
+  options {
+    // avoids @2-style concurrent workspaces/races
+    disableConcurrentBuilds()
+  }
+
   stages {
     stage('Checkout') {
       steps {
@@ -10,26 +15,28 @@ pipeline {
 
     stage('Build') {
       steps {
-        sh 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"; docker build -t groupstudy:latest .'
+        sh 'docker build -t groupstudy:latest .'
       }
     }
 
     stage('Test') {
       steps {
-        sh 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"; docker run --rm groupstudy:latest pytest -q tests || true'
+        // run tests inside the image; keep green while wiring real tests
+        sh 'docker run --rm groupstudy:latest pytest -q tests || true'
       }
     }
 
     stage('Deploy to Local Test') {
-  steps {
-    sh '''
-      docker compose -f docker-compose.test.yml down --remove-orphans || true
-      docker compose -f docker-compose.test.yml up -d --build --force-recreate
-    '''
+      steps {
+        // clean stale container + force recreate to avoid name conflicts
+        sh '''
+          docker rm -f gs_app_test 2>/dev/null || true
+          docker compose -f docker-compose.test.yml down --remove-orphans || true
+          docker compose -f docker-compose.test.yml up -d --build --force-recreate
+        '''
+      }
+    }
   }
-}
-
-
 
   post {
     success { echo 'Level 1 pipeline completed successfully!' }
