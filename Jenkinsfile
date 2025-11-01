@@ -10,26 +10,26 @@ pipeline {
 
     stage('Build') {
       steps {
-        sh 'docker build -t groupstudy:latest .'
+        sh 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"; docker build -t groupstudy:latest .'
       }
     }
 
     stage('Test') {
       steps {
-        // run tests inside the freshly built image
-        sh 'docker run --rm groupstudy:latest pytest -q || true'
+        sh 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"; docker run --rm groupstudy:latest pytest -q tests || true'
       }
     }
 
     stage('Deploy to Local Test') {
-      steps {
-        sh '''
-          docker compose -f docker-compose.test.yml down || true
-          docker compose -f docker-compose.test.yml up -d --build
-        '''
-      }
-    }
+  steps {
+    sh '''
+      docker compose -f docker-compose.test.yml down --remove-orphans || true
+      docker compose -f docker-compose.test.yml up -d --build --force-recreate
+    '''
   }
+}
+
+
 
   post {
     success { echo 'Level 1 pipeline completed successfully!' }
