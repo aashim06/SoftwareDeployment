@@ -70,14 +70,23 @@ pipeline {
         if [ "\$CURRENT" = "blue" ]; then TARGET=green; else TARGET=blue; fi
         echo "Current=\$CURRENT → Target=\$TARGET"
 
-        echo "Health check target (inside Nginx container) before switch..."
-        ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST "
-          for i in {1..12}; do
-            if docker exec reverse_proxy curl -fsS http://gs_app_\$TARGET:8000/health >/dev/null; then echo healthy; exit 0; fi
-            sleep 5
-          done
-          echo 'Target did not become healthy in time'; exit 1
-        "
+        echo 'Health check target (inside Nginx container) before switch...'
+sh """
+  ssh -o StrictHostKeyChecking=no ec2-user@${EC2_HOST} '
+    for i in {1..12}; do
+      # try /health first, then fall back to /
+      if docker exec reverse_proxy sh -lc "
+           (curl -fsS http://gs_app_${TARGET}:8000/health >/dev/null) \
+           || (curl -fsS http://gs_app_${TARGET}:8000/ >/dev/null)
+         "; then
+        echo healthy; exit 0;
+      fi
+      sleep 5
+    done
+    echo "Target did not become healthy in time"; exit 1
+  '
+"""
+
 
         echo "Switch Nginx upstream to \$TARGET and reload..."
         ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST "
