@@ -1,0 +1,10 @@
+# docker-compose.prod.yml
+services:
+  app:
+    build: .
+    container_name: groupstudy_app
+    image: groupstudy:prod
+    command: python app.py
+    ports:
+      - "80:8000"
+    restart: unless-stopped
