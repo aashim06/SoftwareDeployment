@@ -49,54 +49,55 @@ pipeline {
     }
 
     stage('Deploy to EC2 (Prod)') {
-      steps {
-        sshagent(credentials: ['ec2-softdeploy']) {
-          sh """
-            set -e
-            mkdir -p ~/.ssh
-            ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
+  steps {
+    sshagent(credentials: ['ec2-softdeploy']) {
+      sh """
+        set -e
+        mkdir -p ~/.ssh
+        ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
 
-            echo "Sync project files to EC2..."
-            rsync -az --delete -e "ssh -o StrictHostKeyChecking=no" ./ ec2-user@$EC2_HOST:~/app/
+        echo "Sync project files to EC2..."
+        rsync -az --delete -e "ssh -o StrictHostKeyChecking=no" ./ ec2-user@$EC2_HOST:~/app/
 
-            echo "Start both app slots & nginx..."
-            ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST '
-              cd ~/app &&
-              docker compose -f docker-compose.prod.yml up -d --build nginx app_blue app_green
-            '
+        echo "Start both app slots & nginx..."
+        ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST '
+          cd ~/app &&
+          docker compose -f docker-compose.prod.yml up -d --build nginx app_blue app_green
+        '
 
-            echo "Determine current active slot..."
-            CURRENT=\$(ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST "grep -o 'gs_app_\\\\(blue\\\\|green\\\\)' ~/app/nginx/upstream.conf | sed 's/gs_app_//'")
-            if [ "\$CURRENT" = "blue" ]; then TARGET=green; TPORT=8001; else TARGET=blue; TPORT=8000; fi
-            echo "Current=\$CURRENT → Target=\$TARGET"
+        echo "Determine current active slot..."
+        CURRENT=\$(ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST "grep -o 'gs_app\\\\(_blue\\\\|_green\\\\)' ~/app/nginx/upstream.conf | sed 's/gs_app_//'")
+        if [ "\$CURRENT" = "blue" ]; then TARGET=green; else TARGET=blue; fi
+        echo "Current=\$CURRENT → Target=\$TARGET"
 
-            echo "Health check target before switch..."
-            ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST "
-              for i in {1..12}; do
-                if curl -fsS http://localhost:\$TPORT/health >/dev/null; then echo healthy; exit 0; fi
-                sleep 5
-              done
-              echo 'Target did not become healthy in time'; exit 1
-            "
+        echo "Health check target (inside Nginx container) before switch..."
+        ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST "
+          for i in {1..12}; do
+            if docker exec reverse_proxy curl -fsS http://gs_app_\$TARGET:8000/health >/dev/null; then echo healthy; exit 0; fi
+            sleep 5
+          done
+          echo 'Target did not become healthy in time'; exit 1
+        "
 
-            echo "Switch Nginx upstream to \$TARGET and reload..."
-            ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST "
-              if [ \"\$TARGET\" = \"blue\" ]; then
-                echo 'upstream active_app { server gs_app_blue:8000; }' > ~/app/nginx/upstream.conf
-              else
-                echo 'upstream active_app { server gs_app_green:8001; }' > ~/app/nginx/upstream.conf
-              fi
-              docker exec reverse_proxy nginx -s reload || docker compose -f ~/app/docker-compose.prod.yml restart nginx
-            "
+        echo "Switch Nginx upstream to \$TARGET and reload..."
+        ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST "
+          if [ \"\$TARGET\" = \"blue\" ]; then
+            echo 'upstream active_app { server gs_app_blue:8000; }' > ~/app/nginx/upstream.conf
+          else
+            echo 'upstream active_app { server gs_app_green:8000; }' > ~/app/nginx/upstream.conf
+          fi
+          docker exec reverse_proxy nginx -s reload || docker compose -f ~/app/docker-compose.prod.yml restart nginx
+        "
 
-            echo "Smoke test through load balancer..."
-            curl -fsS http://$EC2_HOST/health >/dev/null
+        echo "Smoke test through the load balancer..."
+        curl -fsS http://$EC2_HOST/health >/dev/null
 
-            echo "✅ Blue-green switch complete — new slot: \$TARGET"
-          """
-        }
-      }
+        echo "✅ Blue-green switch complete — new slot: \$TARGET"
+      """
     }
+  }
+}
+
   }
 
   post {
