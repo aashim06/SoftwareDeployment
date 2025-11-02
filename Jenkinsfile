@@ -42,31 +42,23 @@ pipeline {
       steps {
         sshagent(credentials: ['ec2-softdeploy']) {
           sh '''
-            set -e
+           set -e
+             mkdir -p ~/.ssh
+             ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
 
-            # trust the host key to avoid interactive prompt
-            mkdir -p ~/.ssh
-            ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
+             # sync & deploy
+               rsync -az --delete -e "ssh -o StrictHostKeyChecking=no" ./ ec2-user@$EC2_HOST:~/app/
+               ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST '
+                cd ~/app &&
+                docker compose -f docker-compose.prod.yml down --remove-orphans || true &&
+               docker compose -f docker-compose.prod.yml up -d --build --force-recreate
+                '
+                '''
+               }
+               }
+           }
 
-            # sync repo to ~/app on EC2 (fast + idempotent)
-            if command -v rsync >/dev/null 2>&1; then
-              rsync -az --delete --exclude=".git" -e "ssh -o StrictHostKeyChecking=no" ./ ec2-user@$EC2_HOST:~/app/
-            else
-              # fallback to scp if rsync isn't present on this Jenkins node
-              ssh ec2-user@$EC2_HOST 'mkdir -p ~/app'
-              scp -o StrictHostKeyChecking=no -r * ec2-user@$EC2_HOST:~/app/
-            fi
-
-            # build & (re)start on EC2
-            ssh ec2-user@$EC2_HOST '
-              cd ~/app && \
-              docker compose -f docker-compose.prod.yml down --remove-orphans || true && \
-              docker compose -f docker-compose.prod.yml up -d --build --force-recreate
-            '
-          '''
-        }
-      }
-    }
+  
   }
 
   post {
