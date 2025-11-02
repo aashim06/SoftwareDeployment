@@ -37,28 +37,43 @@ pipeline {
       }
     }
 
+    stage('SSH sanity check') {
+  steps {
+    sshagent(credentials: ['ec2-softdeploy']) {
+      sh 'ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST "echo SSH OK && uname -a"'
+    }
+  }
+}
+
+
     // -------------------- NEW: PROD DEPLOY TO EC2 --------------------
     stage('Deploy to EC2 (Prod)') {
-      steps {
-        sshagent(credentials: ['ec2-softdeploy']) {
-          sh '''
-           set -e
-             mkdir -p ~/.ssh
-             ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
+  steps {
+    sshagent(credentials: ['ec2-softdeploy']) {
+      sh '''
+        set -e
+        mkdir -p ~/.ssh
+        ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
 
-             # sync & deploy
-               rsync -az --delete -e "ssh -o StrictHostKeyChecking=no" ./ ec2-user@$EC2_HOST:~/app/
-               ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST '
-                cd ~/app &&
-                docker compose -f docker-compose.prod.yml down --remove-orphans || true &&
-               docker compose -f docker-compose.prod.yml up -d --build --force-recreate
-                '
-                '''
-               }
-               }
-           }
+        echo "Syncing project files to EC2..."
+        rsync -az --delete -e "ssh -o StrictHostKeyChecking=no" ./ ec2-user@$EC2_HOST:~/app/
 
-  
+        echo "Deploying container on EC2..."
+        ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST '
+          cd ~/app &&
+          docker compose -f docker-compose.prod.yml down --remove-orphans || true &&
+          docker compose -f docker-compose.prod.yml up -d --build --force-recreate
+        '
+
+        echo "✅ Deployment successful!"
+      '''
+    }
+  }
+}
+
+
+
+
   }
 
   post {
