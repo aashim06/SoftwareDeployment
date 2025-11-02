@@ -60,10 +60,12 @@ pipeline {
 
         echo "Deploying container on EC2..."
         ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST '
-          cd ~/app &&
-          docker compose -f docker-compose.prod.yml down --remove-orphans || true &&
-          docker compose -f docker-compose.prod.yml up -d --build --force-recreate
+        set -e
+        cd ~/app &&
+        /usr/local/bin/docker-compose -f docker-compose.prod.yml down --remove-orphans || true &&
+        /usr/local/bin/docker-compose -f docker-compose.prod.yml up -d --build --force-recreate
         '
+
 
         echo "✅ Deployment successful!"
       '''
