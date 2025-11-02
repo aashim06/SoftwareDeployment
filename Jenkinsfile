@@ -5,9 +5,7 @@ pipeline {
     EC2_HOST = 'ec2-13-236-165-115.ap-southeast-2.compute.amazonaws.com'
   }
 
-  options {
-    disableConcurrentBuilds()
-  }
+  options { disableConcurrentBuilds() }
 
   stages {
     stage('Checkout') {
@@ -24,7 +22,6 @@ pipeline {
 
     stage('Test') {
       steps {
-        // keep simple smoke tests so the pipeline can pass
         sh 'docker run --rm groupstudy:latest pytest -q tests || true'
       }
     }
@@ -43,9 +40,7 @@ pipeline {
     stage('SSH sanity check') {
       steps {
         sshagent(credentials: ['ec2-softdeploy']) {
-          sh '''
-            ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST "echo SSH OK && uname -a"
-          '''
+          sh 'ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST "echo SSH OK && uname -a"'
         }
       }
     }
@@ -66,7 +61,7 @@ pipeline {
 set -e
 cd ~/app
 
-# Prefer Compose v2; fallback to v1 path if needed
+# Pick Compose v2 if available; else fallback to v1 path
 if docker compose version >/dev/null 2>&1; then
   DC="docker compose"
 elif command -v /usr/local/bin/docker-compose >/dev/null 2>&1; then
@@ -76,8 +71,15 @@ else
   exit 1
 fi
 
+echo "Using: $DC"
+ls -l docker-compose.prod.yml || { echo "docker-compose.prod.yml not found!"; exit 1; }
+test -s docker-compose.prod.yml || { echo "docker-compose.prod.yml is empty!"; exit 1; }
+
 $DC -f docker-compose.prod.yml down --remove-orphans || true
 $DC -f docker-compose.prod.yml up -d --build --force-recreate
+
+echo "Containers:"
+$DC -f docker-compose.prod.yml ps
 EOSSH
 
             echo "✅ Deployment successful!"
@@ -85,7 +87,7 @@ EOSSH
         }
       }
     }
-  } // <-- end stages
+  }
 
   post {
     success { echo '✅ Level 3 deploy completed' }
