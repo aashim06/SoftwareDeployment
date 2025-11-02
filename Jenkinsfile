@@ -16,13 +16,16 @@ pipeline {
 
     stage('Build') {
       steps {
-        sh 'docker build -t groupstudy:latest .'
+        sh '''
+          docker build -t groupstudy:${BUILD_NUMBER} .
+          docker tag groupstudy:${BUILD_NUMBER} groupstudy:prod
+        '''
       }
     }
 
     stage('Test') {
       steps {
-        sh 'docker run --rm groupstudy:latest pytest -q tests || true'
+        sh 'docker run --rm groupstudy:prod pytest -q tests || true'
       }
     }
 
@@ -48,49 +51,56 @@ pipeline {
     stage('Deploy to EC2 (Prod)') {
       steps {
         sshagent(credentials: ['ec2-softdeploy']) {
-          sh '''
+          sh """
             set -e
             mkdir -p ~/.ssh
             ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
 
-            echo "Syncing project files to EC2..."
+            echo "Sync project files to EC2..."
             rsync -az --delete -e "ssh -o StrictHostKeyChecking=no" ./ ec2-user@$EC2_HOST:~/app/
 
-            echo "Deploying container on EC2..."
-            ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST <<'EOSSH'
-set -e
-cd ~/app
+            echo "Start both app slots & nginx..."
+            ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST '
+              cd ~/app &&
+              docker compose -f docker-compose.prod.yml up -d --build nginx app_blue app_green
+            '
 
-# Pick Compose v2 if available; else fallback to v1 path
-if docker compose version >/dev/null 2>&1; then
-  DC="docker compose"
-elif command -v /usr/local/bin/docker-compose >/dev/null 2>&1; then
-  DC="/usr/local/bin/docker-compose"
-else
-  echo "ERROR: Docker Compose not installed on EC2" >&2
-  exit 1
-fi
+            echo "Determine current active slot..."
+            CURRENT=\$(ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST "grep -o 'gs_app_\\\\(blue\\\\|green\\\\)' ~/app/nginx/upstream.conf | sed 's/gs_app_//'")
+            if [ "\$CURRENT" = "blue" ]; then TARGET=green; TPORT=8001; else TARGET=blue; TPORT=8000; fi
+            echo "Current=\$CURRENT → Target=\$TARGET"
 
-echo "Using: $DC"
-ls -l docker-compose.prod.yml || { echo "docker-compose.prod.yml not found!"; exit 1; }
-test -s docker-compose.prod.yml || { echo "docker-compose.prod.yml is empty!"; exit 1; }
+            echo "Health check target before switch..."
+            ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST "
+              for i in {1..12}; do
+                if curl -fsS http://localhost:\$TPORT/health >/dev/null; then echo healthy; exit 0; fi
+                sleep 5
+              done
+              echo 'Target did not become healthy in time'; exit 1
+            "
 
-$DC -f docker-compose.prod.yml down --remove-orphans || true
-$DC -f docker-compose.prod.yml up -d --build --force-recreate
+            echo "Switch Nginx upstream to \$TARGET and reload..."
+            ssh -o StrictHostKeyChecking=no ec2-user@$EC2_HOST "
+              if [ \"\$TARGET\" = \"blue\" ]; then
+                echo 'upstream active_app { server gs_app_blue:8000; }' > ~/app/nginx/upstream.conf
+              else
+                echo 'upstream active_app { server gs_app_green:8001; }' > ~/app/nginx/upstream.conf
+              fi
+              docker exec reverse_proxy nginx -s reload || docker compose -f ~/app/docker-compose.prod.yml restart nginx
+            "
 
-echo "Containers:"
-$DC -f docker-compose.prod.yml ps
-EOSSH
+            echo "Smoke test through load balancer..."
+            curl -fsS http://$EC2_HOST/health >/dev/null
 
-            echo "✅ Deployment successful!"
-          '''
+            echo "✅ Blue-green switch complete — new slot: \$TARGET"
+          """
         }
       }
     }
   }
 
   post {
-    success { echo '✅ Level 3 deploy completed' }
-    failure { echo '❌ Level 3 failed — check the stage logs' }
+    success { echo '✅ Level 4 blue-green deploy completed successfully' }
+    failure { echo '❌ Level 4 failed — check the stage logs' }
   }
 }
